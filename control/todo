@@ -1,0 +1,12 @@
+@ideas
+[ ] Word analysis of the OneyPlays videos.
+[ ] Implement fast fourier transform.
+
+@todo
+2024/09/01
+[X] Implemented basic raylib program.
+[X] Loaded audio stream and played it.
+[X] Created a playing bar with a cursor.
+[X] Made it possible to seek in the audio stream.
+[X] Implemented a waveform for the bar.
+

@@ -1,0 +1,4 @@
+*.old
+*.exe
+examples/bld_example/build
+examples/bld_example/spiral

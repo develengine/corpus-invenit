@@ -1,0 +1,11 @@
+
+
+2024/09/01
+* Downloading captions without video:
+  $ yt-dlp --write-auto-sub --skip-download
+* Download audio and captions:
+  $ yt-dlp -x --write-auto-sub
+* The raylib wave uses unsigned for storing the size of the data. This limits our max audio length to something over 6 hours.
+  - Since we will use the source videos directly, this shouldn't be a problem.
+
+
