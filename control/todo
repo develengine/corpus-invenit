@@ -3,6 +3,13 @@
 [ ] Implement fast fourier transform.
 
 @todo
+2024/09/14
+[ ] Show the words at the correct time on the timeline.
+[ ] Make the timeline zoomable.
+[ ] Parse out all the time delimeted word lines.
+
+2024/09/02
+
 2024/09/01
 [X] Implemented basic raylib program.
 [X] Loaded audio stream and played it.
