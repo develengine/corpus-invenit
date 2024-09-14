@@ -49,6 +49,11 @@
     .a = 255, \
 })
 
+typedef struct
+{
+    u32 offset, size;
+} wave_mip_level_t;
+
 i32
 main(void)
 {
@@ -86,13 +91,6 @@ main(void)
     vtt_data_t vtt_data = {0};
     vtt_chunk_t vtt_chunk = vtt_parse_file(&vtt_data, caption_file);
 
-    for (u32 i = 0; i < vtt_chunk.word_count; ++i) {
-        vtt_word_t word = vtt_data.words.data[vtt_chunk.word_offset + i];
-        printf("%f --> %f: "SV_FMT"\n",
-               word.time_start, word.time_end,
-               word.text_size, vtt_data.text.data + word.text_offset);
-    }
-
     PlayMusicStream(music);
 
     InitWindow(1920, 1080, "Naive DFT");
@@ -100,18 +98,70 @@ main(void)
 
     f32 music_length = GetMusicTimeLength(music);
 
-    dck_stretchy_t (f32, u32) cached_wave_ratios = {0};
+    dck_stretchy_t (f32,              u32) wave_mip_values = {0};
+    dck_stretchy_t (wave_mip_level_t, u32) wave_mip_levels = {0};
+    {
+        u32 wave_size = wave.frameCount;
+
+        dck_stretchy_reserve(wave_mip_values, wave_size);
+
+        for (u32 i = 0; i < wave_size; ++i) {
+            u16 amp_l = wave_data[i * 2 + 0];
+            u16 amp_r = wave_data[i * 2 + 1];
+
+            if (amp_l > amp_r) {
+                amp_r = amp_l;
+            }
+
+            f32 amp_ratio = amp_r / (f32)UINT16_MAX;
+            wave_mip_values.data[wave_mip_values.count + i] = amp_ratio;
+        }
+
+        dck_stretchy_push(wave_mip_levels, (wave_mip_level_t) {
+            .offset = wave_mip_values.count,
+            .size   = wave_size,
+        });
+
+        wave_mip_values.count += wave_size;
+
+        while (wave_size > 1) {
+            wave_size /= 2;
+
+            dck_stretchy_reserve(wave_mip_values, wave_size);
+
+            wave_mip_level_t prev_level = wave_mip_levels.data[wave_mip_levels.count - 1];
+
+            for (u32 i = 0; i < wave_size; ++i) {
+                f32 a = wave_mip_values.data[prev_level.offset + i * 2 + 0];
+                f32 b = wave_mip_values.data[prev_level.offset + i * 2 + 1];
+                wave_mip_values.data[wave_mip_values.count + i] = (a + b) * 0.5f;
+            }
+
+            dck_stretchy_push(wave_mip_levels, (wave_mip_level_t) {
+                .offset = wave_mip_values.count,
+                .size   = wave_size,
+            });
+
+            wave_mip_values.count += wave_size;
+        }
+    }
+
+    UnloadWave(wave);
 
     u8 text_buffer[256];
 
     while (!WindowShouldClose()) {
         UpdateMusicStream(music);
 
-        i32 bar_height   = 200;
-        i32 cursor_width = 4;
+        i32 bar_height      = 200;
+        i32 cursor_width    = 4;
+        i32 captions_height = 64;
 
         i32 window_width  = GetScreenWidth();
         i32 window_height = GetScreenHeight();
+
+        if (IsKeyPressed(KEY_Q))
+            break;
 
         if (IsKeyPressed(KEY_P)) {
             if (IsMusicStreamPlaying(music)) {
@@ -152,42 +202,17 @@ main(void)
 
         DrawRectangle(0, window_height - bar_height, window_width, bar_height, BAR_BG_COLOR);
 
-        if (cached_wave_ratios.count != window_width) {
-            cached_wave_ratios.count = 0;
-            dck_stretchy_reserve(cached_wave_ratios, window_width);
+        u32 mip_level_i = wave_mip_levels.count - 1;
+        wave_mip_level_t mip_level = wave_mip_levels.data[mip_level_i];
 
-            u32 pixel_frames = wave.frameCount / window_width;
-
-            for (u32 x_pos = 0; x_pos < window_width; ++x_pos) {
-                u32 max_amp = 0;
-
-                u32 frame_end = pixel_frames * (x_pos + 1);
-                if (frame_end > wave.frameCount) {
-                    frame_end = wave.frameCount;
-                }
-
-                for (u32 frame = pixel_frames * x_pos; frame <  frame_end; ++frame) {
-                    u32 amp_l = wave_data[frame * 2 + 0];
-                    u32 amp_r = wave_data[frame * 2 + 1];
-
-                    if (amp_l > amp_r) {
-                        amp_r = amp_l;
-                    }
-
-                    max_amp += amp_r;
-                }
-
-                max_amp /= pixel_frames;
-
-                f32 amp_ratio = max_amp / (f32)UINT16_MAX;
-                cached_wave_ratios.data[x_pos] = amp_ratio;
-            }
-
-            cached_wave_ratios.count = window_width;
+        while (mip_level.size < window_width && mip_level_i != 0) {
+            --mip_level_i;
+            mip_level = wave_mip_levels.data[mip_level_i];
         }
 
-        for (u32 x_pos = 0; x_pos < cached_wave_ratios.count; ++x_pos) {
-            f32 amp_ratio = cached_wave_ratios.data[x_pos];
+        for (u32 x_pos = 0; x_pos < window_width; ++x_pos) {
+            u32 amp_index = mip_level.offset + (x_pos * mip_level.size) / window_width;
+            f32 amp_ratio = wave_mip_values.data[amp_index];
             i32 wave_height = (i32)(bar_height * amp_ratio);
             i32 wave_space  = bar_height - wave_height;
 
@@ -213,7 +238,13 @@ main(void)
             }
 
             snprintf(text_buffer, sizeof(text_buffer), SV_FMT, vtt_word.text_size, vtt_data.text.data + vtt_word.text_offset);
-            DrawText(text_buffer, 0, 0, 64, TEXT_FG_COLOR);
+
+            i32 captions_width = MeasureText(text_buffer, captions_height);
+
+            i32 cap_x = (window_width - captions_width) / 2;
+            i32 cap_y = window_height - bar_height - captions_height;
+
+            DrawText(text_buffer, cap_x, cap_y, captions_height, TEXT_FG_COLOR);
         }
 
         EndDrawing();  

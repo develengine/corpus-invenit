@@ -4,7 +4,8 @@
 
 @todo
 2024/09/14
-[ ] Show the words at the correct time on the timeline.
+[X] Show the words at the correct time on the timeline.
+[X] Make the timeline use mip maps instead of caching.
 [ ] Make the timeline zoomable.
 [ ] Parse out all the time delimeted word lines.
 

@@ -263,6 +263,7 @@ vtt_parse_line(vtt_parser_t *parser, vtt_data_t *data, u32 ts_start, u32 ts_end)
         word = vtt_parse_word(parser, data);
         word.time_start = time_stamp / 1000.0f;
 
+        // FIXME: This should go until it finds this string.
         if (!vtt_parse_string(parser, "</c>"))
             continue;
     }
