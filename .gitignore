@@ -1,2 +1,5 @@
 *.exe
 sesh
+build
+build.old
+program

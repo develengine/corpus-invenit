@@ -1,13 +1,14 @@
-@ideas
+@backlog
 [ ] Word analysis of the OneyPlays videos.
 [ ] Implement fast fourier transform.
+[ ] Make the timeline zoomable.
 
 @todo
 2024/09/14
 [X] Show the words at the correct time on the timeline.
 [X] Make the timeline use mip maps instead of caching.
-[ ] Make the timeline zoomable.
-[ ] Parse out all the time delimeted word lines.
+[ ] Implement a DFT and show the output on the screen.
+
 
 2024/09/02
 
