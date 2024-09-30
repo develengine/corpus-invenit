@@ -13,7 +13,7 @@ main(i32 argc, char *argv[])
 
     BLD_SA_PUSH(cc, "src/main.c", "../raylib/lib/libraylib.a");
 
-    BLD_SA_PUSH(cc, "-I.", "-Isrc", "-I../raylib/include", "-o", output, BLD_WARNINGS);
+    BLD_SA_PUSH(cc, "-I.", "-Isrc", "-I../raylib/include", "-Ithirdpartythings", "-o", output, BLD_WARNINGS);
 
     BLD_SA_PUSH(cc, "-lm", "-ldl", "-lpthread");
 
