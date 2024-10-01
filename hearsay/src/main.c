@@ -79,7 +79,7 @@ typedef enum
 } tile_t;
 
 #define PROP_NAME   (1 << 0)
-#define PROP_MOVING (1 << 0)
+#define PROP_MOVING (1 << 1)
 
 #define TILE_RES 32
 
@@ -300,7 +300,7 @@ world_init(world_t *world)
             .y_pos        = (rand() % (MAP_HEIGHT / 2)) + (MAP_HEIGHT / 4),
             .texture_tile = tile_Man,
 
-            .properties  = PROP_NAME,
+            .properties  = PROP_NAME | PROP_MOVING,
             .name_offset = generate_name(&(world->person_names)),
         });
     }
@@ -357,10 +357,9 @@ main(void)
 
     glob.font = load_font_in_such_a_way_that_i_dont_kill_raysan_with_a_hammer(font_path);
 
-    // Image atlas_image = GenImageColor(ATLAS_SIZE * TILE_RES, ATLAS_SIZE * TILE_RES, (Color) {0});
     Image atlas_image = GenImageColor(ATLAS_SIZE * TILE_RES, ATLAS_SIZE * TILE_RES, RED);
     Texture2D atlas = LoadTextureFromImage(atlas_image);
-    // UnloadImage(atlas_image);
+     UnloadImage(atlas_image);
 
     Texture2D textures[TILE_COUNT] = {
     #define O(m_name, m_path) \
@@ -379,41 +378,79 @@ main(void)
     world_init(&world);
 
     u32 gen_buffer[TILE_RES * TILE_RES * GEN_BUF_CAPACITY];
+    u32 gen_buffer_ids[GEN_BUF_CAPACITY];
     u32 gen_buffer_count = 0;
 
-    f32 update_waiter = 0.0f;
+    u32 atlas_tile_count = 0;
 
-    b32 tile_generated = false;
-    Rectangle tile_rect = {
-        .x      = 0,
-        .y      = 0,
-        .width  = TILE_RES,
-        .height = TILE_RES,
-    };
+    f32 update_waiter = 0.0f;
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_Q))
             break;
 
-        if (!tile_generated) {
-            tile_generated = true;
+        if (atlas_tile_count < ATLAS_SIZE * ATLAS_SIZE) {
+            gen_buffer_count = 1;
+            for (u32 tile_i = 0; tile_i < gen_buffer_count; ++tile_i) {
+                u32 buf_offset = TILE_RES * TILE_RES * tile_i;
+                Olivec_Canvas canvas = olivec_canvas(gen_buffer + buf_offset, TILE_RES, TILE_RES, TILE_RES);
 
-            Olivec_Canvas canvas = olivec_canvas(gen_buffer, TILE_RES, TILE_RES, TILE_RES);
+                olivec_fill(canvas, 0);
 
-            for (u32 i = 0; i < 5; ++i) {
-                u32 func_i = rand() % 1;
+                for (u32 i = 0; i < 5; ++i) {
+                    u32 func_i = rand() % 2;
 
-                switch (func_i) {
-                    case 0: {
-                        i32 x = rand() % TILE_RES;
-                        i32 y = rand() % TILE_RES;
-                        i32 r = rand() % (TILE_RES / 2);
-                        olivec_circle(canvas, x, y, r, rand_color());
-                    } break;
+                    switch (func_i) {
+                        case 0: {
+                            olivec_circle(
+                                canvas,
+                                rand() % TILE_RES, rand() % TILE_RES,
+                                rand() % (TILE_RES / 2),
+                                rand_color()
+                            );
+                        } break;
+
+                        case 1: {
+                            olivec_line(
+                                canvas,
+                                rand() % TILE_RES, rand() % TILE_RES,
+                                rand() % TILE_RES, rand() % TILE_RES,
+                                rand_color()
+                            );
+                        } break;
+                    }
                 }
-            }
 
-            UpdateTextureRec(atlas, tile_rect, gen_buffer);
+                gen_buffer_ids[tile_i] = atlas_tile_count;
+
+                dck_stretchy_push(world.persons, (person_t) {
+                    .x_pos        = rand() % MAP_WIDTH,
+                    .y_pos        = rand() % MAP_HEIGHT,
+                    .texture_tile = TILE_GENERATED,
+                    .atlas_id     = atlas_tile_count,
+                });
+
+                ++atlas_tile_count;
+            }
+        }
+
+        while (gen_buffer_count != 0) {
+            u32 gen_buffer_i = gen_buffer_count - 1;
+            u32 atlas_id = gen_buffer_ids[gen_buffer_i];
+
+            if (atlas_id >= ATLAS_SIZE * ATLAS_SIZE)
+                break;
+
+            Rectangle atlas_rect = {
+                .x      = (atlas_id % ATLAS_SIZE) * TILE_RES,
+                .y      = (atlas_id / ATLAS_SIZE) * TILE_RES,
+                .width  = TILE_RES,
+                .height = TILE_RES,
+            };
+
+            UpdateTextureRec(atlas, atlas_rect, gen_buffer + TILE_RES * TILE_RES * gen_buffer_i);
+
+            --gen_buffer_count;
         }
 
         f32 dt = GetFrameTime();
@@ -468,32 +505,41 @@ main(void)
         for (u32 person_i = 0; person_i < world.persons.count; ++person_i) {
             person_t person = world.persons.data[person_i];
 
-            if ((person.properties & PROP_NAME) == 0)
-                continue;
-
             Vector2 pos = {
                 person.x_pos * tile_size + screen_origin.x,
                 person.y_pos * tile_size + screen_origin.y,
             };
 
-            DrawTextureEx(textures[person.texture_tile], pos, 0.0f, tile_size / (f32)TILE_RES, WHITE);
+            if (person.texture_tile == TILE_GENERATED) {
+                Rectangle dest = {
+                    .x      = pos.x,
+                    .y      = pos.y,
+                    .width  = tile_size,
+                    .height = tile_size,
+                };
 
-            Vector2 text_pos = {
-                pos.x,
-                pos.y - tile_size * 0.75f,
-            };
+                Rectangle source = {
+                    .x      = (person.atlas_id % ATLAS_SIZE) * TILE_RES,
+                    .y      = (person.atlas_id / ATLAS_SIZE) * TILE_RES,
+                    .width  = TILE_RES,
+                    .height = TILE_RES,
+                };
 
-            draw_text(world.person_names.data + person.name_offset, text_pos, tile_size, tile_size * 0.5);
+                DrawTexturePro(atlas, source, dest, (Vector2) {0}, 0.0f, WHITE);
+            }
+            else {
+                DrawTextureEx(textures[person.texture_tile], pos, 0.0f, tile_size / (f32)TILE_RES, WHITE);
+            }
+
+            if ((person.properties & PROP_NAME) != 0) {
+                Vector2 text_pos = {
+                    pos.x,
+                    pos.y - tile_size * 0.75f,
+                };
+
+                draw_text(world.person_names.data + person.name_offset, text_pos, tile_size, tile_size * 0.5);
+            }
         }
-
-        Rectangle dest = {
-            .x      = (MAP_WIDTH  / 2) * tile_size + screen_origin.x,
-            .y      = (MAP_HEIGHT / 2) * tile_size + screen_origin.y,
-            .width  = tile_size,
-            .height = tile_size,
-        };
-
-        DrawTexturePro(atlas, tile_rect, dest, (Vector2) {0}, 0.0f, WHITE);
 
         EndDrawing();  
     }

@@ -550,9 +550,9 @@ OLIVECDEF void olivec_blend_color(uint32_t *c1, uint32_t c2)
 
     // @tripl: Made the blend function work with transparent backgrounds.
 
-    uint32_t rn = r1 + r2; if (rn > 255) rn = 255;
-    uint32_t gn = g1 + g2; if (gn > 255) gn = 255;
-    uint32_t bn = b1 + b2; if (bn > 255) bn = 255;
+    uint32_t rn = ((r1 * a1 * (255 - a2)) / 255 + (r2 * a2)) / 255; if (rn > 255) rn = 255;
+    uint32_t gn = ((g1 * a1 * (255 - a2)) / 255 + (g2 * a2)) / 255; if (gn > 255) gn = 255;
+    uint32_t bn = ((b1 * a1 * (255 - a2)) / 255 + (b2 * a2)) / 255; if (bn > 255) bn = 255;
     uint32_t an;
 
     if (a1 > a2) {

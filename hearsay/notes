@@ -10,12 +10,14 @@
 * The complexity should result from the interactions with each other and their predisposed behaviours.
 
 @todo
+1/9/2024:
+[X] Create a new tile / position every frame until it fills the texture up.
+
 30/9/2024:
 [X] Draw a circle in the buffer.
 [X] Transfer the circle to a GPU texture region.
 [X] Render the thing as a tile on some position.
 [X] Create a random tile with some basic gay algorithm.
-[ ] Create a new tile / position every frame until it fills the texture up.
 
 29/9/2024:
 [X] Make a guy and have him move around in some way.
