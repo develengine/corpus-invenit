@@ -23,10 +23,11 @@
 // TILE_TABLE
 // #undef O
 #define TILE_TABLE \
-    O(Grass, "res/grass.png") \
-    O(Stone, "res/stone.png") \
-    O(Tree,  "res/tree.png") \
-    O(Man,   "res/man.png") \
+    O(Grass,  "res/grass.png") \
+    O(Stone,  "res/stone.png") \
+    O(Tree,   "res/tree.png") \
+    O(Man,    "res/man.png") \
+    O(Forest, "res/forest.png") \
 /**/
 
 typedef struct
@@ -78,8 +79,10 @@ typedef enum
     TILE_GENERATED,
 } tile_t;
 
-#define PROP_NAME   (1 << 0)
-#define PROP_MOVING (1 << 1)
+#define PROP_NAME     (1 << 0)
+#define PROP_MOVING   (1 << 1)
+#define PROP_THINKING (1 << 2)
+#define PROP_FORM     (1 << 3)
 
 #define TILE_RES 32
 
@@ -97,8 +100,86 @@ struct {
     Font font;
 } glob = {0};
 
-#define MAP_WIDTH  128
-#define MAP_HEIGHT 128
+#define MAP_WIDTH  64
+#define MAP_HEIGHT 64
+
+typedef enum
+{
+    fdl_Tree,
+    fdl_Rock,
+    fdl_Man,
+} fdl_class_t;
+
+typedef enum
+{
+    fdl_fruit_None = 0,
+    fdl_fruit_Apple,
+    fdl_fruit_Orange,
+    fdl_fruit_Lemon,
+
+    FDL_FRUIT_COUNT
+} fdl_fruit_t;
+
+static u32
+fdl_fruit_color(fdl_fruit_t fruit)
+{
+    switch (fruit) {
+        case fdl_fruit_Apple:  return 0xFF0000FF;
+        case fdl_fruit_Orange: return 0xFF00AAFF;
+        case fdl_fruit_Lemon:  return 0xFF00FFFF;
+
+        default: return 0;
+    }
+}
+
+typedef struct
+{
+    f32 height;
+    f32 thickness;
+    f32 crown_span;
+    f32 leafness;
+
+    fdl_fruit_t fruit;
+
+    u32 seed; // Defines whether something looks exactly as something else.
+} fdl_tree_t;
+
+typedef struct
+{
+    f32 roundness;
+    f32 height;
+    f32 width;
+
+    u32 seed; // Defines whether something looks exactly as something else.
+} fdl_rock_t;
+
+typedef struct
+{
+} fdl_man_t;
+
+typedef struct
+{
+    fdl_class_t class;
+    union {
+        fdl_man_t  man;
+        fdl_tree_t tree;
+        fdl_rock_t rock;
+    };
+} fdl_t;
+
+typedef struct
+{
+    i32 x, y;
+} ivec2_t;
+
+
+#define MAX_REL_POS 3
+
+typedef struct
+{
+    fdl_t fdl;
+} homun_t;
+
 
 typedef enum
 {
@@ -134,28 +215,44 @@ typedef struct
 
 typedef struct
 {
-    i32 target_x;
-    i32 target_y;
+    u32 lol;
 } mind_data_t;
 
 typedef action_t (*process_t)(mind_data_t *data, stimul_t input);
+
+typedef enum
+{
+    mind_movement_Right,
+    mind_movement_Up,
+    mind_movement_Left,
+    mind_movement_Down,
+} mind_movement_t;
+
+typedef struct
+{
+    mind_movement_t movement;
+} mind_output_t;
 
 typedef struct
 {
     mind_data_t data;
     dck_stretchy_t (process_t, i32) processes;
+    mind_output_t output;
 } mind_t;
 
 typedef struct
 {
     i32 x_pos;
     i32 y_pos;
+
     tile_t texture_tile;
-    u32 atlas_id;
+    u32    atlas_id;
 
     u64 properties;
 
     u32 name_offset;
+    u32 mind_index;
+    u32 form_index;
 } person_t;
 
 typedef dck_stretchy_t (char, u32) person_names_t;
@@ -163,12 +260,21 @@ typedef dck_stretchy_t (char, u32) person_names_t;
 #define PERSON_COUNT 10
 
 typedef struct {
-    tile_t map_tiles  [MAP_WIDTH * MAP_HEIGHT];
-    f32    map_heights[MAP_WIDTH * MAP_HEIGHT];
+    b32    map_collision[MAP_WIDTH * MAP_HEIGHT];
+    tile_t map_tiles    [MAP_WIDTH * MAP_HEIGHT];
+    f32    map_heights  [MAP_WIDTH * MAP_HEIGHT];
 
     person_names_t person_names;
+    dck_stretchy_t (mind_t,   u32) person_minds;
+    dck_stretchy_t (fdl_t,    u32) person_forms;
     dck_stretchy_t (person_t, u32) persons;
 } world_t;
+
+static void
+mind_raise_stimul(mind_t *mind, stimul_t stimul)
+{
+    
+}
 
 static u32
 generate_name(person_names_t *person_names)
@@ -184,6 +290,81 @@ generate_name(person_names_t *person_names)
     person_names->count += size;
 
     return name_offset;
+}
+
+static inline u32
+hash_pcg(u32 input)
+{
+    u32 state = input * 747796405 + 2891336453;
+    u32 word = ((state >> ((state >> 28) + 4)) ^ state) * 277803737;
+    return (word >> 22) ^ word;
+}
+
+static inline f32
+hash_pcg_norm(u32 input)
+{
+    return (hash_pcg(input) % 0xFFFF) / (f32)(0xFFFF);
+}
+
+static fdl_tree_t
+generate_tree_fdl(u32 seed)
+{
+    u32 seed_off = hash_pcg(seed);
+
+    return (fdl_tree_t) {
+        .height     = hash_pcg_norm(seed_off + 0),
+        .thickness  = hash_pcg_norm(seed_off + 1),
+        .crown_span = hash_pcg_norm(seed_off + 2),
+        .leafness   = hash_pcg_norm(seed_off + 3),
+        .fruit      = hash_pcg(seed_off + 4) % FDL_FRUIT_COUNT,
+        .seed       = seed,
+    };
+}
+
+
+static void
+draw_tree_tile(Olivec_Canvas canvas, fdl_tree_t tree)
+{
+    u32 trunk_width  = (canvas.width  * tree.thickness) / 2 + 1;
+    u32 trunk_height = canvas.height * tree.height + 2;
+
+    olivec_rect(canvas,
+        (canvas.width - trunk_width) / 2,
+        canvas.height - trunk_height,
+        trunk_width,
+        trunk_height,
+        0xFF0066AA
+    );
+
+    u32 min_crown_r = canvas.width / 6;
+
+    u32 crown_radius = min_crown_r + (canvas.width - min_crown_r) * tree.crown_span / 2;
+
+    olivec_circle(canvas,
+        canvas.width / 2,
+        canvas.height - trunk_height,
+        crown_radius,
+        0xFF22CC11
+    );
+
+    if (tree.fruit != fdl_fruit_None) {
+        u32 hash_off = hash_pcg(tree.seed);
+        u32 fruit_color = fdl_fruit_color(tree.fruit);
+
+        for (u32 i = 0; i < 5; ++i) {
+            f32 angle = M_PI * 2.0f * hash_pcg_norm(hash_off + i * 2 + 0);
+            f32 dist  = hash_pcg_norm(hash_off + i * 2 + 1);
+            u32 x_off = cosf(angle)  * crown_radius * dist;
+            u32 y_off = -sinf(angle) * crown_radius * dist;
+
+            olivec_circle(canvas,
+                canvas.width / 2 + x_off,
+                canvas.height - trunk_height + y_off,
+                2,
+                fruit_color
+            );
+        }
+    }
 }
 
 static u32
@@ -278,6 +459,22 @@ load_font_in_such_a_way_that_i_dont_kill_raysan_with_a_hammer(const char *font_p
 }
 
 
+static ivec2_t
+world_rand_pos(world_t *world)
+{
+    ivec2_t res;
+
+    do {
+        res.x = rand() % MAP_WIDTH;
+        res.y = rand() % MAP_HEIGHT;
+    } while (world->map_collision[res.x + res.y * MAP_WIDTH]);
+
+    world->map_collision[res.x + res.y * MAP_WIDTH] = true;
+
+    return res;
+}
+
+
 void
 world_init(world_t *world)
 {
@@ -291,17 +488,30 @@ world_init(world_t *world)
             f32 random = (rand() % 2048) / 2047.0f;
             f32 dist_scale = dist / MAP_WIDTH / 2;
             world->map_heights[x_pos + y_pos * MAP_WIDTH] = random * (dist_scale);
+
+            if (x_pos == 0 || x_pos == MAP_WIDTH  - 1
+             || y_pos == 0 || y_pos == MAP_HEIGHT - 1)
+            {
+                world->map_tiles    [x_pos + y_pos * MAP_WIDTH] = tile_Forest;
+                world->map_collision[x_pos + y_pos * MAP_WIDTH] = true;
+            }
         }
     }
 
     for (u32 i = 0; i < PERSON_COUNT; ++i) {
+        ivec2_t pos = world_rand_pos(world);
+
+        u32 mind_index = world->person_minds.count;
+        dck_stretchy_push(world->person_minds, (mind_t) {0});
+
         dck_stretchy_push(world->persons, (person_t) {
-            .x_pos        = (rand() % (MAP_WIDTH  / 2)) + (MAP_WIDTH  / 4),
-            .y_pos        = (rand() % (MAP_HEIGHT / 2)) + (MAP_HEIGHT / 4),
+            .x_pos        = (MAP_WIDTH  / 4) + pos.x / 2,
+            .y_pos        = (MAP_HEIGHT / 4) + pos.y / 2,
             .texture_tile = tile_Man,
 
-            .properties  = PROP_NAME | PROP_MOVING,
+            .properties  = PROP_NAME | PROP_THINKING,
             .name_offset = generate_name(&(world->person_names)),
+            .mind_index  = mind_index,
         });
     }
 }
@@ -312,40 +522,20 @@ world_update(world_t *world)
     for (u32 person_i = 0; person_i < world->persons.count; ++person_i) {
         person_t *person_p = world->persons.data + person_i;
 
-        if ((person_p->properties & PROP_MOVING) == 0)
-            continue;
+        if (person_p->properties & PROP_THINKING) {
+            mind_t *mind = world->person_minds.data + person_p->mind_index;
 
-        for (u32 subj_i = 0; subj_i < world->persons.count; ++subj_i) {
-            if (subj_i == person_i)
-                continue;
-
-            person_t *subj_p = world->persons.data + subj_i;
-
-            f32 dx = subj_p->x_pos - person_p->x_pos;
-            f32 dy = subj_p->y_pos - person_p->y_pos;
-            if (sqrtf(dx * dx + dy * dy) <= SIGHT_RADIUS) {
+            for (u32 other_i = 0; other_i < world->persons.count; ++other_i) {
                 
             }
         }
-
-        i32 moves[] = {
-             1, 0,
-             0, 1,
-            -1, 0,
-             0,-1
-        };
-
-        u32 move_i = rand() % (LENGTH_OF(moves) / 2);
-
-        person_p->x_pos += moves[move_i * 2 + 0];
-        person_p->y_pos += moves[move_i * 2 + 1];
     }
 }
 
 i32
 main(void)
 {
-    srand(time(0));
+    // srand(time(0));
 
     SetTraceLogLevel(LOG_WARNING);
 
@@ -359,7 +549,7 @@ main(void)
 
     Image atlas_image = GenImageColor(ATLAS_SIZE * TILE_RES, ATLAS_SIZE * TILE_RES, RED);
     Texture2D atlas = LoadTextureFromImage(atlas_image);
-     UnloadImage(atlas_image);
+    UnloadImage(atlas_image);
 
     Texture2D textures[TILE_COUNT] = {
     #define O(m_name, m_path) \
@@ -397,37 +587,26 @@ main(void)
 
                 olivec_fill(canvas, 0);
 
-                for (u32 i = 0; i < 5; ++i) {
-                    u32 func_i = rand() % 2;
-
-                    switch (func_i) {
-                        case 0: {
-                            olivec_circle(
-                                canvas,
-                                rand() % TILE_RES, rand() % TILE_RES,
-                                rand() % (TILE_RES / 2),
-                                rand_color()
-                            );
-                        } break;
-
-                        case 1: {
-                            olivec_line(
-                                canvas,
-                                rand() % TILE_RES, rand() % TILE_RES,
-                                rand() % TILE_RES, rand() % TILE_RES,
-                                rand_color()
-                            );
-                        } break;
-                    }
-                }
+                fdl_tree_t tree = generate_tree_fdl(rand());
+                draw_tree_tile(canvas, tree);
 
                 gen_buffer_ids[tile_i] = atlas_tile_count;
 
+                u32 form_index = world.person_forms.count;
+                dck_stretchy_push(world.person_forms, (fdl_t) {
+                    .class = fdl_Tree,
+                    .tree  = tree,
+                });
+
+                ivec2_t pos = world_rand_pos(&world);
+
                 dck_stretchy_push(world.persons, (person_t) {
-                    .x_pos        = rand() % MAP_WIDTH,
-                    .y_pos        = rand() % MAP_HEIGHT,
+                    .x_pos        = pos.x,
+                    .y_pos        = pos.y,
                     .texture_tile = TILE_GENERATED,
                     .atlas_id     = atlas_tile_count,
+                    .properties   = PROP_FORM,
+                    .form_index   = form_index,
                 });
 
                 ++atlas_tile_count;

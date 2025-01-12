@@ -8,9 +8,26 @@
 
 @important
 * The complexity should result from the interactions with each other and their predisposed behaviours.
+* Symbols are arbitrary.
+* We can use any mental representation, even the same data as represents the world.
+  - The "homunculus" model.
+* The purpouse of perception is to trigger events of runnning processes?
 
 @todo
-1/9/2024:
+2/10/2024:
+[X] Create a basic language for describind things (Form Description Language).
+  - A tree with a long trunk, small leaves and round canopy.
+  - A rock the size of a human head.
+[ ] Create a simple tree generator based on tree parameters (FDL).
+[ ] Create a simple rock generator.
+  - Sharpness is a number of poligons type beat?
+[ ] Apple trees will have apples in the canopy.
+  - They will also drop apples randomly around itself.
+[ ] The apple will also have a FDL representation.
+[ ] Mushrooms will have invisible mycelium in specific places and will grow randomly.
+  - We can think of adding multiple growth stages to the mushroom.
+
+1/10/2024:
 [X] Create a new tile / position every frame until it fills the texture up.
 
 30/9/2024:
