@@ -2,6 +2,7 @@
 
 #include "core/utils.h"
 #include "core/dck.h"
+#include "core/lina.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -23,8 +24,9 @@
     O(Grass,  "res/grass.png") \
     O(Forest, "res/forest.png") \
     \
-    O(Tree, "res/tree.png") \
-    O(Rock, "res/rock.png") \
+    O(Tree,  "res/tree.png") \
+    O(Rock,  "res/rock.png") \
+    O(Apple, "res/apple.png") \
     \
     O(ManFront, "res/man_front.png") \
     O(ManBack,  "res/man_back.png") \
@@ -86,11 +88,6 @@ struct {
     Font font;
 } glob = {0};
 
-typedef struct
-{
-    i32 x, y;
-} ivec2_t;
-
 typedef enum
 {
     action_None,
@@ -128,6 +125,84 @@ typedef struct
     tile_t tile;
 } object_t;
 
+typedef enum
+{
+    goal_Find,
+    goal_GoTo,
+    goal_PickUp,
+    goal_Eat,
+} goal_type_t;
+
+typedef struct
+{
+    object_t object;
+} goal_find_t;
+
+typedef struct
+{
+    i32 x;
+    i32 y;
+} goal_go_to_t;
+
+typedef struct
+{
+    goal_type_t type;
+    union {
+        goal_go_to_t go_to;
+        goal_find_t  find;
+    };
+} goal_t;
+
+#define GOAL_STACK_CAP 16
+#define VIEW_DIST 7
+#define VIEW_SIDE (VIEW_DIST * 2 + 1)
+
+typedef enum
+{
+    symbol_Unknown,
+
+    symbol_None,
+    symbol_Tree,
+    symbol_Rock,
+    symbol_Apple,
+    symbol_Person,
+    symbol_Forest,
+} symbol_t;
+
+typedef struct
+{
+    goal_t goals_stack[GOAL_STACK_CAP];
+    u32 goals_top;
+
+    symbol_t view[VIEW_SIDE * VIEW_SIDE];
+    ivec2_t  view_orig;
+} soul_t;
+
+static inline symbol_t
+soul_view_get(soul_t *soul, ivec2_t coord)
+{
+    i32 x = (soul->view_orig.x + coord.x) % VIEW_SIDE;
+    i32 y = (soul->view_orig.y + coord.y) % VIEW_SIDE;
+
+    return soul->view[x + y * VIEW_SIDE];
+}
+
+static inline void
+soul_view_set(soul_t *soul, ivec2_t coord, symbol_t symbol)
+{
+    i32 x = (soul->view_orig.x + coord.x) % VIEW_SIDE;
+    i32 y = (soul->view_orig.y + coord.y) % VIEW_SIDE;
+
+    soul->view[x + y * VIEW_SIDE] = symbol;
+}
+
+static inline void
+soul_view_move(soul_t *soul, ivec2_t offset)
+{
+    soul->view_orig.x = (soul->view_orig.x + VIEW_SIDE + offset.x) % VIEW_SIDE;
+    soul->view_orig.y = (soul->view_orig.y + VIEW_SIDE + offset.y) % VIEW_SIDE;
+}
+
 typedef struct
 {
     ivec2_t pos;
@@ -135,6 +210,8 @@ typedef struct
     b32 grabbing;
 
     u32 name_offset;
+
+    i32 soul_index;
 
     output_t output;
 } person_t;
@@ -147,6 +224,7 @@ typedef dck_stretchy_t (char, u32) person_names_t;
 #define PERSON_COUNT 2
 #define ROCK_COUNT   50
 #define TREE_COUNT   25
+#define APPLE_COUNT  25
 
 typedef struct {
     tile_t   map_tiles    [MAP_WIDTH * MAP_HEIGHT];
@@ -155,7 +233,36 @@ typedef struct {
 
     person_names_t person_names;
     dck_stretchy_t (person_t, u32) persons;
+    dck_stretchy_t (soul_t,   u32) souls;
 } world_t;
+
+static inline symbol_t
+world_view_get(world_t *world, person_t *person, ivec2_t coords)
+{
+    ivec2_t abs_pos = {
+        .x = person->pos.x + coords.x,
+        .y = person->pos.y + coords.y,
+    };
+
+    if (abs_pos.x < 0 || abs_pos.x >= MAP_WIDTH
+     || abs_pos.y < 0 || abs_pos.y >= MAP_WIDTH)
+        return symbol_Forest;
+
+    unsigned tile_index = abs_pos.x + abs_pos.y * MAP_WIDTH;
+
+    if (world->map_tiles[tile_index] == tile_Forest)
+        return symbol_Forest;
+
+    object_t object = world->map_objects[tile_index];
+    switch (object.tile) {
+        case tile_Rock:  return symbol_Rock;
+        case tile_Tree:  return symbol_Tree;
+        case tile_Apple: return symbol_Apple;
+        case tile_None:  return symbol_None;
+
+        default: return symbol_Unknown;
+    }
+}
 
 static u32
 generate_name(person_names_t *person_names)
@@ -305,15 +412,30 @@ world_init(world_t *world)
         };
     }
 
+    for (u32 i = 0; i < APPLE_COUNT; ++i) {
+        ivec2_t pos = world_rand_pos(world);
+
+        world->map_objects[pos.x + pos.y * MAP_WIDTH] = (object_t) {
+            .tile = tile_Apple,
+        };
+    }
+
     for (u32 i = 0; i < PERSON_COUNT; ++i) {
         ivec2_t pos = world_rand_pos(world);
+
+        u32 soul_index = -1;
+
+        if (i != 0) { // NOTE: Player doesn't have a soul.
+            soul_index = world->souls.count;
+            dck_stretchy_push(world->souls, (soul_t) {0});
+        }
 
         dck_stretchy_push(world->persons, (person_t) {
             .pos          = pos,
             .name_offset  = generate_name(&(world->person_names)),
+            .soul_index   = soul_index,
         });
     }
-
 }
 
 b32
@@ -385,8 +507,9 @@ f32
 object_weight(object_t object)
 {
     switch (object.tile) {
-        case tile_None: return 0.0f;
-        case tile_Rock: return 50.0f;
+        case tile_None:  return 0.0f;
+        case tile_Apple: return 0.5f;
+        case tile_Rock:  return 50.0f;
 
         default: return 666.0f;
     }
@@ -399,8 +522,64 @@ pos_to_index(ivec2_t pos)
 }
 
 void
+soul_update(soul_t *soul, person_t *person, world_t *world)
+{
+    // Shift the view to adjust for previous movement.
+    switch (person->output.action) {
+        case action_Up: {
+            soul_view_move(soul, (ivec2_t) { 0,-1 });
+            for (i32 i = 0; i < VIEW_SIDE; ++i) {
+                soul_view_set(soul, (ivec2_t) { i, 0 }, symbol_Unknown);
+            }
+        } break;
+        case action_Down: {
+            soul_view_move(soul, (ivec2_t) { 0, 1 });
+            for (i32 i = 0; i < VIEW_SIDE; ++i) {
+                soul_view_set(soul, (ivec2_t) { i, VIEW_SIDE - 1 }, symbol_Unknown);
+            }
+        } break;
+        case action_Left: {
+            soul_view_move(soul, (ivec2_t) {-1, 0 });
+            for (i32 i = 0; i < VIEW_SIDE; ++i) {
+                soul_view_set(soul, (ivec2_t) { 0, i }, symbol_Unknown);
+            }
+        } break;
+        case action_Right: {
+            soul_view_move(soul, (ivec2_t) { 1, 0 });
+            for (i32 i = 0; i < VIEW_SIDE; ++i) {
+                soul_view_set(soul, (ivec2_t) { VIEW_SIDE - 1, i }, symbol_Unknown);
+            }
+        } break;
+        default: break;
+    }
+
+    // Scan the view for changes and new stimuly.
+    for (i32 y = 0; y < VIEW_SIDE; ++y) {
+        for (i32 x = 0; x < VIEW_SIDE; ++x) {
+            ivec2_t coords = { x, y };
+
+            symbol_t world_symbol = world_view_get(world, person, coords);
+            symbol_t soul_symbol  = soul_view_get(soul, coords);
+
+            soul_view_set(soul, coords, world_symbol);
+        }
+    }
+}
+
+void
 world_update(world_t *world)
 {
+    // Update souls first.
+    for (u32 i = 0; i < world->persons.count; ++i) {
+        person_t *person = world->persons.data + i;
+
+        if (person->soul_index != -1) { // Skip soulless persons
+            soul_t *soul = world->souls.data + person->soul_index;
+            soul_update(soul, person, world);
+        }
+    }
+
+    // Then update the earthly realm.
     for (u32 i = 0; i < world->persons.count; ++i) {
         person_t *person = world->persons.data + i;
 
@@ -420,7 +599,6 @@ world_update(world_t *world)
 
             ivec2_t front_pos = facing_pos(person->pos, person->dir);
             u32 front_index = pos_to_index(front_pos);
-
             object_t object = world->map_objects[front_index];
 
             if (!person->grabbing || object.tile == tile_None) {
@@ -454,7 +632,30 @@ world_update(world_t *world)
             }
         }
         else if (action_is_turn(action)) {
-            person->dir = turn_to_dir(action);
+            dir_t turn_dir = turn_to_dir(action);
+
+            ivec2_t front_pos = facing_pos(person->pos, person->dir);
+            u32 front_index = pos_to_index(front_pos);
+            object_t object = world->map_objects[front_index];
+
+            if (person->grabbing && object.tile != tile_None) {
+                f32 weight = object_weight(object);
+                ivec2_t next_obj_pos = facing_pos(person->pos, turn_dir);
+                u32 next_obj_index = pos_to_index(next_obj_pos);
+
+                if (weight < 100.0f && !world->map_collision[next_obj_index]) {
+                    world->map_collision[front_index]    = false;
+                    world->map_collision[next_obj_index] = true;
+
+                    world->map_objects[next_obj_index] = world->map_objects[front_index];
+                    world->map_objects[front_index] = (object_t) {0};
+                }
+                else if (front_index != next_obj_index) {
+                    person->grabbing = false;
+                }
+            }
+
+            person->dir = turn_dir;
         }
         else if (output.action == action_Grab) {
             person->grabbing = !person->grabbing;
